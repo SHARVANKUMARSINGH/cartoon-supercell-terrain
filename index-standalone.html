@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Cartoon Supercell — Procedural Grass Terrain</title>
+<style>
+  :root{
+    --ui-green:#7ec850; --ui-dark:#1c2b12;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ width:100%; height:100%; overflow:hidden; background:#0e1408;
+    font-family:"Segoe UI", system-ui, sans-serif; touch-action:none; }
+  #app{ position:fixed; inset:0; }
+  canvas{ display:block; }
+
+  /* ---------- HUD ---------- */
+  #hud{ position:fixed; top:14px; left:14px; z-index:20; color:#eaffd8;
+    text-shadow:0 2px 6px rgba(0,0,0,.6); pointer-events:none; user-select:none; }
+  #hud h1{ font-size:18px; letter-spacing:.5px; }
+  #hud h1 span{ color:var(--ui-green); }
+  #hud p{ font-size:12px; opacity:.75; margin-top:3px; }
+  #stats{ font-size:11px; opacity:.65; margin-top:6px; font-family:monospace; }
+
+  /* ---------- Color-correction panel ---------- */
+  #grade{ position:fixed; top:14px; right:14px; z-index:20; width:210px;
+    background:rgba(12,20,6,.72); border:1px solid rgba(126,200,80,.35);
+    border-radius:12px; padding:12px 14px; color:#dff5c8; backdrop-filter:blur(6px); }
+  #grade h2{ font-size:12px; text-transform:uppercase; letter-spacing:1px;
+    color:var(--ui-green); margin-bottom:8px; }
+  #grade label{ display:flex; justify-content:space-between; font-size:11px; margin-top:7px; }
+  #grade input[type=range]{ width:100%; accent-color:var(--ui-green); height:18px; }
+  #grade .row{ display:flex; gap:6px; margin-top:8px; }
+  #grade button{ flex:1; background:rgba(126,200,80,.15); color:#dff5c8;
+    border:1px solid rgba(126,200,80,.4); border-radius:8px; padding:5px 0;
+    font-size:11px; cursor:pointer; }
+  #grade button:hover{ background:rgba(126,200,80,.3); }
+  @media (max-width:640px){ #grade{ display:none; } #hud h1{ font-size:14px; } }
+
+  /* ---------- Joystick (mobile) ---------- */
+  #joystick{ position:fixed; left:26px; bottom:26px; width:130px; height:130px;
+    border-radius:50%; z-index:30; display:none;
+    background:radial-gradient(circle at 50% 40%, rgba(126,200,80,.18), rgba(20,32,10,.55));
+    border:2px solid rgba(126,200,80,.45); box-shadow:0 4px 18px rgba(0,0,0,.4); }
+  #stick{ position:absolute; left:50%; top:50%; width:56px; height:56px;
+    border-radius:50%; transform:translate(-50%,-50%);
+    background:radial-gradient(circle at 35% 30%, #a8e878, #4d8a2a 70%);
+    border:2px solid rgba(255,255,255,.35); }
+  #lookzone{ position:fixed; right:0; top:0; width:55%; height:100%; z-index:25; display:none; }
+  body.mobile #joystick, body.mobile #lookzone{ display:block; }
+  body.mobile #hint{ display:block; }
+
+  #hint{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+    z-index:20; display:none; color:#eaffd8; font-size:12px; opacity:.8;
+    text-shadow:0 2px 4px rgba(0,0,0,.6); pointer-events:none; }
+
+  #flash{ position:fixed; inset:0; z-index:15; pointer-events:none; opacity:0;
+    background:radial-gradient(circle at 50% 30%, rgba(190,255,170,.9), rgba(60,140,60,.25) 60%, transparent);
+    mix-blend-mode:screen; }
+  #loading{ position:fixed; inset:0; z-index:50; display:flex; align-items:center;
+    justify-content:center; flex-direction:column; gap:14px; background:#0e1408;
+    color:#dff5c8; transition:opacity .6s; }
+  #loading .bar{ width:220px; height:6px; border-radius:3px; background:#243616; overflow:hidden; }
+  #loading .bar i{ display:block; height:100%; width:0%; background:var(--ui-green); transition:width .3s; }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="flash"></div>
+
+  <div id="hud">
+    <h1>🌪 Cartoon <span>Supercell</span> Terrain</h1>
+    <p>Procedural bumps &amp; bends · 150 × 120 km · GPU smoke storm</p>
+    <div id="stats"></div>
+  </div>
+
+  <div id="grade">
+    <h2>Color Grade</h2>
+    <label>Exposure <span id="v-exposure">1.05</span></label>
+    <input type="range" id="s-exposure" min="0.4" max="2.0" step="0.01" value="1.05">
+    <label>Saturation <span id="v-saturation">1.25</span></label>
+    <input type="range" id="s-saturation" min="0" max="2" step="0.01" value="1.25">
+    <label>Contrast <span id="v-contrast">1.08</span></label>
+    <input type="range" id="s-contrast" min="0.5" max="2" step="0.01" value="1.08">
+    <label>Green Lift <span id="v-green">0.10</span></label>
+    <input type="range" id="s-green" min="0" max="0.4" step="0.005" value="0.10">
+    <label>Vignette <span id="v-vignette">0.35</span></label>
+    <input type="range" id="s-vignette" min="0" max="1" step="0.01" value="0.35">
+    <div class="row">
+      <button id="preset-cartoon">Cartoon</button>
+      <button id="preset-storm">Storm</button>
+      <button id="preset-noir">Noir</button>
+    </div>
+  </div>
+
+  <div id="joystick"><div id="stick"></div></div>
+  <div id="lookzone"></div>
+  <div id="hint">Left stick: move · Right side: look</div>
+
+  <div id="loading">
+    <div style="font-size:20px">🌱 Growing 150 km of cartoon grass…</div>
+    <div class="bar"><i id="loadbar"></i></div>
+  </div>
+
+  <script>
+    window.__errs = [];
+    window.addEventListener('error', e => {
+      window.__errs.push((e.message || 'error') + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''));
+      const el = document.querySelector('#loading div');
+      if (el) el.textContent = '⚠ ' + window.__errs.join(' | ');
+    });
+    window.addEventListener('unhandledrejection', e => {
+      window.__errs.push('promise: ' + (e.reason && e.reason.message || e.reason));
+      const el = document.querySelector('#loading div');
+      if (el) el.textContent = '⚠ ' + window.__errs.join(' | ');
+    });
+  </script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+/* ====== inline bundle: noise.js ====== */
+// Seedable 2D simplex noise + fbm helpers (self-contained, no deps)
+function makeNoise2D(seed = 1337) {
+  const grad = [
+    [1, 1], [-1, 1], [1, -1], [-1, -1],
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+  ];
+  const perm = new Uint8Array(512);
+  const p = new Uint8Array(256);
+  let s = seed >>> 0;
+  const rand = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  for (let i = 0; i < 256; i++) p[i] = i;
+  for (let i = 255; i > 0; i--) {
+    const j = (rand() * (i + 1)) | 0;
+    [p[i], p[j]] = [p[j], p[i]];
+  }
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+
+  const F2 = 0.5 * (Math.sqrt(3) - 1);
+  const G2 = (3 - Math.sqrt(3)) / 6;
+
+  return function noise2D(xin, yin) {
+    let n0 = 0, n1 = 0, n2 = 0;
+    const sIn = (xin + yin) * F2;
+    const i = Math.floor(xin + sIn), j = Math.floor(yin + sIn);
+    const t = (i + j) * G2;
+    const x0 = xin - (i - t), y0 = yin - (j - t);
+    const i1 = x0 > y0 ? 1 : 0, j1 = x0 > y0 ? 0 : 1;
+    const x1 = x0 - i1 + G2, y1 = y0 - j1 + G2;
+    const x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
+    const ii = i & 255, jj = j & 255;
+    let t0 = 0.5 - x0 * x0 - y0 * y0;
+    if (t0 >= 0) {
+      const g = grad[perm[ii + perm[jj]] & 7];
+      t0 *= t0; n0 = t0 * t0 * (g[0] * x0 + g[1] * y0);
+    }
+    let t1 = 0.5 - x1 * x1 - y1 * y1;
+    if (t1 >= 0) {
+      const g = grad[perm[ii + i1 + perm[jj + j1]] & 7];
+      t1 *= t1; n1 = t1 * t1 * (g[0] * x1 + g[1] * y1);
+    }
+    let t2 = 0.5 - x2 * x2 - y2 * y2;
+    if (t2 >= 0) {
+      const g = grad[perm[ii + 1 + perm[jj + 1]] & 7];
+      t2 *= t2; n2 = t2 * t2 * (g[0] * x2 + g[1] * y2);
+    }
+    return 70 * (n0 + n1 + n2); // ~[-1, 1]
+  };
+}
+
+function makeFbm2D(seed = 1337, octaves = 4, lacunarity = 2.0, gain = 0.5) {
+  const n = makeNoise2D(seed);
+  return function fbm(x, y) {
+    let amp = 0.5, freq = 1, sum = 0, norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      sum += amp * n(x * freq, y * freq);
+      norm += amp;
+      amp *= gain; freq *= lacunarity;
+    }
+    return sum / norm;
+  };
+}
+
+/* ====== inline bundle: terrain.js ====== */
+
+
+
+/**
+ * Cartoon grass terrain:
+ *  - Map footprint: 150 km x 120 km (1 world unit = 100 m  =>  1500 x 1200 units)
+ *  - Procedural bumps: fbm hills
+ *  - Procedural bends: domain-warped ridges (the "bend" pass curves the ridges)
+ *  - Toon gradient shader: lime tops, deep-green valleys, dark grass blotches,
+ *    matching the reference image palette.
+ */
+
+const WORLD = {
+  kmX: 150, kmZ: 120,
+  unitToMeters: 100,          // 1 unit = 100 m
+  get sizeX() { return this.kmX * 1000 / this.unitToMeters; }, // 1500
+  get sizeZ() { return this.kmZ * 1000 / this.unitToMeters; }, // 1200
+};
+
+const fbmBumps = makeFbm2D(4201, 4, 2.1, 0.5);
+const fbmBend  = makeFbm2D(9021, 3, 2.0, 0.55);
+const fbmFine  = makeFbm2D(5511, 3, 2.4, 0.5);
+
+function terrainHeight(x, z) {
+  // ---- BENDS: domain warp curves the ridge lines organically
+  const wx = fbmBend(x * 0.0016 + 13.7, z * 0.0016 - 4.2);
+  const wz = fbmBend(x * 0.0016 - 71.3, z * 0.0016 + 55.8);
+  const px = x + wx * 260;   // bend amplitude ~26 km
+  const pz = z + wz * 260;
+
+  // ---- BUMPS: broad rolling hills (~8 km wavelength) + medium bumps
+  let h = fbmBumps(px * 0.0012, pz * 0.0012) * 42;   // ±~4.2 km… scaled to cartoon proportions
+  h += fbmBumps(px * 0.005 + 9.1, pz * 0.005) * 9;   // medium bumps
+  h += fbmFine(x * 0.02, z * 0.02) * 1.6;            // fine detail
+
+  // Gentle valley dish so the horizon reads like the reference "island" mound
+  const dx = x / (WORLD.sizeX * 0.5), dz = z / (WORLD.sizeZ * 0.5);
+  const edge = Math.min(1, Math.max(0, (Math.sqrt(dx * dx + dz * dz) - 0.55) / 0.6));
+  h -= edge * edge * 26;
+  return h;
+}
+
+const terrainVert = /* glsl */`
+  varying vec3 vPos;
+  varying vec3 vNormal;
+  varying float vHeight;
+  void main() {
+    vPos = position;
+    vHeight = position.y;
+    vNormal = normalMatrix * normal;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const terrainFrag = /* glsl */`
+  precision highp float;
+  varying vec3 vPos;
+  varying vec3 vNormal;
+  varying float vHeight;
+
+  uniform vec3 uSunDir;
+  uniform vec3 uCamPos;
+  uniform float uTime;
+
+  // cheap hash noise for the mottled cartoon grass
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float vnoise(vec2 p){
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1,0)), f.x),
+               mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y);
+  }
+
+  void main() {
+    vec3 n = normalize(vNormal);
+
+    // --- cartoon palette from the reference image ---
+    vec3 deepGreen  = vec3(0.208, 0.372, 0.075);  // valley green
+    vec3 midGreen   = vec3(0.430, 0.660, 0.140);  // main grass
+    vec3 limeTop    = vec3(0.640, 0.830, 0.200);  // sunlit hilltop lime
+    vec3 blotchDark = vec3(0.235, 0.410, 0.085);  // dark grass tuft blotches
+
+    float hMix = smoothstep(-18.0, 34.0, vHeight);
+    vec3 col = mix(deepGreen, midGreen, smoothstep(0.0, 0.55, hMix));
+    col = mix(col, limeTop, smoothstep(0.55, 1.0, hMix) * 0.85);
+
+    // large soft blotches + fine mottle (like the painted grass in the image)
+    float blotch = vnoise(vPos.xz * 0.012);
+    float blotch2 = vnoise(vPos.xz * 0.035 + 40.0);
+    col = mix(col, blotchDark, smoothstep(0.55, 0.8, blotch) * 0.55);
+    col = mix(col, col * 1.10, smoothstep(0.5, 0.85, blotch2) * 0.35);
+    float mottle = vnoise(vPos.xz * 0.35);
+    col *= 0.94 + 0.12 * mottle;
+
+    // --- toon-ish lighting: 3-band step + soft wrap ---
+    float ndl = dot(n, normalize(uSunDir)) * 0.5 + 0.5;
+    float band = ndl < 0.35 ? 0.62 : (ndl < 0.68 ? 0.85 : 1.08);
+    col *= band;
+
+    // storm ambient: cool the shadows slightly
+    col = mix(col, col * vec3(0.82, 0.95, 0.88), (1.0 - band) * 0.35);
+
+    // rim of freshness toward camera (fake fresnel lift)
+    vec3 viewDir = normalize(uCamPos - vPos);
+    float fres = pow(1.0 - max(dot(viewDir, n), 0.0), 3.0);
+    col += fres * vec3(0.05, 0.09, 0.02);
+
+    // distance haze into stormy sky
+    float dist = length(uCamPos - vPos);
+    float haze = smoothstep(250.0, 1100.0, dist);
+    col = mix(col, vec3(0.42, 0.50, 0.38), haze * 0.85);
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+function buildTerrain() {
+  const group = new THREE.Group();
+
+  const segX = 380, segZ = 304; // ~400 m grid — crisp bumps, still fast
+  const geo = new THREE.PlaneGeometry(WORLD.sizeX, WORLD.sizeZ, segX, segZ);
+  geo.rotateX(-Math.PI / 2);
+
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    pos.setY(i, terrainHeight(pos.getX(i), pos.getZ(i)));
+  }
+  geo.computeVertexNormals();
+
+  const uniforms = {
+    uSunDir: { value: new THREE.Vector3(0.45, 0.75, 0.3) },
+    uCamPos: { value: new THREE.Vector3() },
+    uTime: { value: 0 },
+  };
+
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: terrainVert,
+    fragmentShader: terrainFrag,
+    uniforms,
+  });
+
+  const terrain = new THREE.Mesh(geo, mat);
+  terrain.name = 'terrain';
+  group.add(terrain);
+
+  // ---- Island skirt: drop the rim like the orange-brown edge in the reference
+  const skirt = buildSkirt(geo);
+  group.add(skirt);
+
+  return { group, uniforms, terrain };
+}
+
+function buildSkirt(terrainGeo) {
+  // Build a ribbon around the outer border of the plane, dropping down.
+  const src = terrainGeo.attributes.position;
+  const segX = 380, segZ = 304;
+  const cols = segX + 1;
+  const rows = segZ + 1;
+  const border = [];
+  const at = (r, c) => r * cols + c;
+
+  for (let c = 0; c < cols; c++) border.push(at(0, c));              // front
+  for (let r = 1; r < rows; r++) border.push(at(r, cols - 1));       // right
+  for (let c = cols - 2; c >= 0; c--) border.push(at(rows - 1, c));  // back
+  for (let r = rows - 2; r >= 1; r--) border.push(at(r, 0));         // left
+
+  const drop = 55;
+  const verts = [], idx = [];
+  const ringCount = border.length;
+  for (let i = 0; i < ringCount; i++) {
+    const vi = border[i] * 3;
+    const x = src.array[vi], y = src.array[vi + 1], z = src.array[vi + 2];
+    // push skirt slightly outward so it flares like the cartoon rim
+    const ox = x === 0 ? -3 : (Math.abs(x - WORLD.sizeX / 2) < 0.01 ? Math.sign(x) * 3 : Math.sign(x) * 2);
+    const oz = z === 0 ? -3 : (Math.abs(z - WORLD.sizeZ / 2) < 0.01 ? Math.sign(z) * 3 : Math.sign(z) * 2);
+    verts.push(x + ox, y + 0.4, z + oz);
+    verts.push(x + ox * 2.2, y - drop, z + oz * 2.2);
+  }
+  for (let i = 0; i < ringCount; i++) {
+    const a = i * 2, b = i * 2 + 1;
+    const c = ((i + 1) % ringCount) * 2, d = ((i + 1) % ringCount) * 2 + 1;
+    idx.push(a, b, c, b, d, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+
+  const m = new THREE.MeshStandardMaterial({
+    color: 0xb06a2a, roughness: 0.95, metalness: 0,
+    side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(g, m);
+}
+
+/** Instanced cartoon grass tufts (dark green clumps like the reference image). */
+function buildGrassTufts(count = 2600) {
+  // one tuft = 5 crossed blades
+  const blade = new THREE.PlaneGeometry(0.9, 2.4, 1, 2);
+  blade.translate(0, 1.2, 0);
+  const bp = blade.attributes.position;
+  for (let i = 0; i < bp.count; i++) {
+    const y = bp.getY(i);
+    bp.setX(i, bp.getX(i) * (1 - y / 3.2));          // taper
+    bp.setZ(i, bp.getZ(i) + Math.sin(y * 2.2) * 0.12); // slight bend
+  }
+
+  const geos = [];
+  for (let b = 0; b < 5; b++) {
+    const g = blade.clone();
+    g.rotateY((b / 5) * Math.PI);
+    g.rotateZ((Math.random() - 0.5) * 0.35);
+    geos.push(g);
+  }
+  const tuftGeo = mergeGeos(geos);
+
+  const mat = new THREE.MeshLambertMaterial({ color: 0x2f5c14, side: THREE.DoubleSide });
+  const inst = new THREE.InstancedMesh(tuftGeo, mat, count);
+  const dummy = new THREE.Object3D();
+
+  for (let i = 0; i < count; i++) {
+    const x = (Math.random() - 0.5) * WORLD.sizeX * 0.94;
+    const z = (Math.random() - 0.5) * WORLD.sizeZ * 0.94;
+    const y = terrainHeight(x, z);
+    dummy.position.set(x, y - 0.05, z);
+    dummy.rotation.y = Math.random() * Math.PI * 2;
+    const s = 0.8 + Math.random() * 1.5;
+    dummy.scale.set(s, s * (0.8 + Math.random() * 0.6), s);
+    dummy.updateMatrix();
+    inst.setMatrixAt(i, dummy.matrix);
+  }
+  inst.instanceMatrix.needsUpdate = true;
+  return inst;
+}
+
+function mergeGeos(geos) {
+  let vCount = 0, iCount = 0;
+  geos.forEach(g => { vCount += g.attributes.position.count; iCount += g.index.count; });
+  const pos = new Float32Array(vCount * 3);
+  const nor = new Float32Array(vCount * 3);
+  const uv = new Float32Array(vCount * 2);
+  const idx = new Uint16Array(iCount);
+  let vo = 0, io = 0;
+  geos.forEach(g => {
+    pos.set(g.attributes.position.array, vo * 3);
+    nor.set(g.attributes.normal.array, vo * 3);
+    uv.set(g.attributes.uv.array, vo * 2);
+    const gi = g.index.array;
+    for (let i = 0; i < gi.length; i++) idx[io + i] = gi[i] + vo;
+    vo += g.attributes.position.count;
+    io += gi.length;
+  });
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  return out;
+}
+
+/* ====== inline bundle: smoke.js ====== */
+
+
+
+/**
+ * Real-time smoke simulator → supercell thunderstorm.
+ *
+ * A pooled particle system advects "smoke puffs" with:
+ *  - buoyant updraft (strong in the mesocyclone core, weak outside)
+ *  - rotation around the mesocyclone axis (supercell spin)
+ *  - curl-ish turbulence from fbm
+ *  - entrainment: puffs converge toward the rotating wall-cloud base
+ * Particles are rendered as soft, noise-eroded billboard sprites with a
+ * green-hued hail-core tint — the classic green supercell look.
+ * A lightning controller spawns jagged bolt meshes + light flashes.
+ */
+
+const curl = makeFbm2D(777, 3, 2.2, 0.5);
+
+/* ------------------------------------------------------------------ */
+/*  Smoke particle pool (Points + custom shader)                        */
+/* ------------------------------------------------------------------ */
+class SmokeSimulator {
+  constructor({ maxParticles = 2200, stormPos = new THREE.Vector3() } = {}) {
+    this.max = maxParticles;
+    this.stormPos = stormPos.clone();
+
+    // particle state (SoA)
+    this.pos = new Float32Array(this.max * 3);
+    this.vel = new Float32Array(this.max * 3);
+    this.life = new Float32Array(this.max);      // seconds remaining
+    this.maxLife = new Float32Array(this.max);
+    this.size = new Float32Array(this.max);
+    this.shade = new Float32Array(this.max);     // 0..1 brightness seed
+    this.alive = new Uint8Array(this.max);
+    this.head = 0;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1));
+    geo.setAttribute('aShade', new THREE.BufferAttribute(this.shade, 1));
+    geo.setAttribute('aLife', new THREE.BufferAttribute(this.life, 1));
+
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        uTime: { value: 0 },
+        uGreenGlow: { value: 0.0 },   // raised when lightning charges the core
+        uPixelRatio: { value: 1 },
+      },
+      vertexShader: /* glsl */`
+        attribute float aSize;
+        attribute float aShade;
+        attribute float aLife;
+        varying float vShade;
+        varying float vFade;
+        varying float vGreen;
+        uniform float uPixelRatio;
+        void main() {
+          vShade = aShade;
+          // fade in fast, fade out at end of life
+          float t = aLife; // remaining seconds passed from CPU (encoded)
+          vFade = clamp(aLife, 0.0, 1.0);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = aSize * uPixelRatio * (620.0 / -mv.z);
+          gl_PointSize = min(gl_PointSize, 420.0);
+          gl_Position = projectionMatrix * mv;
+          // green tint strongest low in the cloud (hail core)
+          vGreen = clamp(1.2 - (position.y - ${'0.0'}) * 0.004, 0.0, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        varying float vShade;
+        varying float vFade;
+        varying float vGreen;
+        uniform float uTime;
+        uniform float uGreenGlow;
+
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+        float vnoise(vec2 p){
+          vec2 i = floor(p), f = fract(p);
+          f = f*f*(3.0-2.0*f);
+          return mix(mix(hash(i), hash(i+vec2(1,0)), f.x),
+                     mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
+        }
+
+        void main() {
+          vec2 uv = gl_PointCoord - 0.5;
+          float r = length(uv);
+          if (r > 0.5) discard;
+
+          // erode the disc with animated noise => puffy smoke edge
+          float n = vnoise(gl_PointCoord * 5.0 + vShade * 37.0 + uTime * 0.12);
+          float edge = smoothstep(0.5, 0.12, r + (n - 0.5) * 0.28);
+
+          // base cloud colors: dark storm grey -> green hail core
+          vec3 greyDark  = vec3(0.16, 0.17, 0.18);
+          vec3 greyLight = vec3(0.52, 0.55, 0.56);
+          vec3 greenCore = vec3(0.29, 0.66, 0.30);
+
+          vec3 col = mix(greyDark, greyLight, vShade);
+          // sickly green tint low in the storm, boosted by lightning charge
+          float g = clamp(vGreen * (0.55 + uGreenGlow * 1.6), 0.0, 1.0);
+          col = mix(col, greenCore, g * (0.35 + 0.45 * n));
+
+          float a = edge * vFade * 0.62;
+          gl_FragColor = vec4(col, a);
+        }
+      `,
+    });
+
+    this.points = new THREE.Points(geo, mat);
+    this.points.frustumCulled = false;
+    this.uniforms = mat.uniforms;
+
+    this.spawnDebt = 0;
+    this.time = 0;
+  }
+
+  /** spawn a puff: ring inflow near base, or updraft core, or anvil outflow */
+  spawn() {
+    const i = this.head;
+    this.head = (this.head + 1) % this.max;
+    this.alive[i] = 1;
+
+    const S = this.stormPos;
+    const roll = Math.random();
+    const ang = Math.random() * Math.PI * 2;
+    let x, y, z, vx, vy, vz, life, size;
+
+    if (roll < 0.62) {
+      // rotating wall-cloud inflow band (low, converging)
+      const R = 120 + Math.random() * 160;
+      x = S.x + Math.cos(ang) * R;
+      z = S.z + Math.sin(ang) * R;
+      y = S.y + 18 + Math.random() * 45;
+      vx = -Math.cos(ang) * 9; vz = -Math.sin(ang) * 9;
+      vy = 5 + Math.random() * 8;
+      life = 14 + Math.random() * 10;
+      size = 30 + Math.random() * 36;
+    } else if (roll < 0.9) {
+      // mesocyclone updraft core
+      const R = Math.random() * 80;
+      x = S.x + Math.cos(ang) * R;
+      z = S.z + Math.sin(ang) * R;
+      y = S.y + 30 + Math.random() * 140;
+      vx = 0; vy = 26 + Math.random() * 20; vz = 0;
+      life = 12 + Math.random() * 8;
+      size = 34 + Math.random() * 44;
+    } else {
+      // anvil outflow at the top — spreads downwind
+      const R = 60 + Math.random() * 240;
+      x = S.x + Math.cos(ang) * R;
+      z = S.z + Math.sin(ang) * R;
+      y = S.y + 300 + Math.random() * 90;
+      vx = 24 + Math.random() * 14; vy = 1.5; vz = 6;
+      life = 20 + Math.random() * 14;
+      size = 55 + Math.random() * 60;
+    }
+
+    this.pos.set([x, y, z], i * 3);
+    this.vel.set([vx, vy, vz], i * 3);
+    this.life[i] = 1;                    // shader fade uses 0..1
+    this.maxLife[i] = life;
+    this._lifeRem = this._lifeRem || new Float32Array(this.max);
+    this._lifeRem[i] = life;
+    this.size[i] = size;
+    this.shade[i] = Math.random();
+  }
+
+  update(dt) {
+    this.time += dt;
+    const S = this.stormPos;
+    const t = this.time;
+
+    // spawn rate scaled to dt (≈ 170 spawns/sec -> ~2200 alive with lifetimes)
+    this.spawnDebt += dt * 170;
+    while (this.spawnDebt >= 1) { this.spawn(); this.spawnDebt -= 1; }
+
+    const omega = 0.42; // mesocyclone angular velocity (rad/s, stylized)
+    for (let i = 0; i < this.max; i++) {
+      if (!this.alive[i]) { this.life[i] = 0; continue; }
+      const i3 = i * 3;
+      let x = this.pos[i3], y = this.pos[i3 + 1], z = this.pos[i3 + 2];
+      let vx = this.vel[i3], vy = this.vel[i3 + 1], vz = this.vel[i3 + 2];
+
+      // rotation about storm axis (tangential velocity ~ omega x r, damped high up)
+      const rx = x - S.x, rz = z - S.z;
+      const r = Math.sqrt(rx * rx + rz * rz) + 1e-3;
+      const heightDamp = 1 / (1 + Math.max(0, y - S.y - 150) / 220);
+      const vTan = omega * Math.min(r, 220) * heightDamp;
+      vx += ((-rz / r) * vTan - vx) * Math.min(1, dt * 1.6);
+      vz += ((rx / r) * vTan - vz) * Math.min(1, dt * 1.6);
+
+      // buoyancy: strong inside core radius, slight sink outside
+      const inCore = Math.max(0, 1 - r / 260);
+      const buoy = (inCore * 26 - 3.5) * (1 - Math.max(0, y - S.y - 330) / 160);
+      vy += buoy * dt;
+
+      // turbulence
+      const n1 = curl(x * 0.004 + t * 0.05, z * 0.004);
+      const n2 = curl(z * 0.004 - t * 0.04, y * 0.004 + 7.7);
+      vx += n1 * 10 * dt; vz += n2 * 10 * dt; vy += (n1 + n2) * 4 * dt;
+
+      // drag + integrate
+      const drag = Math.max(0, 1 - dt * 0.55);
+      vx *= drag; vy *= drag; vz *= drag;
+      x += vx * dt; y += vy * dt; z += vz * dt;
+
+      // kill if too old, too high dissipated, or too far downwind
+      this._lifeRem[i] -= dt;
+      if (this._lifeRem[i] <= 0 || y > S.y + 480 || r > 900) {
+        this.alive[i] = 0; this.life[i] = 0;
+        this.pos[i3 + 1] = -9999;
+        continue;
+      }
+
+      this.pos[i3] = x; this.pos[i3 + 1] = y; this.pos[i3 + 2] = z;
+      this.vel[i3] = vx; this.vel[i3 + 1] = vy; this.vel[i3 + 2] = vz;
+      const lr = this._lifeRem[i] / this.maxLife[i];
+      this.life[i] = Math.min(1, lr * 4) * Math.min(1, (1 - lr) * 6 + 0.15);
+      // puffs inflate as they age
+      this.size[i] += dt * 2.2;
+    }
+
+    this.points.geometry.attributes.position.needsUpdate = true;
+    this.points.geometry.attributes.aLife.needsUpdate = true;
+    this.points.geometry.attributes.aSize.needsUpdate = true;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Lightning — jagged bolts + green flash lights                       */
+/* ------------------------------------------------------------------ */
+class Lightning {
+  constructor(scene, stormPos) {
+    this.scene = scene;
+    this.stormPos = stormPos.clone();
+    this.bolts = [];
+    this.nextStrike = 2.0;
+    this.flashLight = new THREE.PointLight(0x9fff8a, 0, 2600, 1.4);
+    this.flashLight.position.copy(stormPos).y += 120;
+    scene.add(this.flashLight);
+    this.hemi = new THREE.HemisphereLight(0xbfff9e, 0x1c2b12, 0);
+    scene.add(this.hemi);
+    this.onStrike = null; // callback for screen flash
+  }
+
+  strike() {
+    const S = this.stormPos;
+    const group = new THREE.Group();
+    const ang = Math.random() * Math.PI * 2;
+    const R = Math.random() * 200;
+    const sx = S.x + Math.cos(ang) * R;
+    const sz = S.z + Math.sin(ang) * R;
+    const top = S.y + 120 + Math.random() * 140;
+
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xd8ffc8, transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+
+    // main channel + 2 branches
+    group.add(this.boltMesh(sx, top, sz, 0, mat));
+    group.add(this.boltMesh(sx, top * 0.92, sz, 2.1, mat));
+    group.add(this.boltMesh(sx, top * 0.8, sz, 4.4, mat));
+
+    this.scene.add(group);
+    this.bolts.push({ group, mat, age: 0, ttl: 0.28 + Math.random() * 0.2 });
+    this.flashLight.intensity = 90000;
+    this.hemi.intensity = 1.4;
+    if (this.onStrike) this.onStrike();
+  }
+
+  boltMesh(x, yTop, z, seed, mat) {
+    const pts = [];
+    let px = x, py = yTop, pz = z;
+    const segs = 14;
+    const drop = (yTop - -40) / segs;
+    for (let i = 0; i <= segs; i++) {
+      pts.push(new THREE.Vector3(px, py, pz));
+      px += (Math.random() - 0.5) * 26 + Math.sin(seed + i * 1.7) * 10;
+      pz += (Math.random() - 0.5) * 26 + Math.cos(seed + i * 2.3) * 10;
+      py -= drop * (0.7 + Math.random() * 0.6);
+    }
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const geo = new THREE.TubeGeometry(curve, 40, 1.4, 5, false);
+    return new THREE.Mesh(geo, mat);
+  }
+
+  update(dt, greenGlowUniform) {
+    this.nextStrike -= dt;
+    if (this.nextStrike <= 0) {
+      this.strike();
+      // supercells flicker — sometimes double tap
+      this.nextStrike = Math.random() < 0.3 ? 0.18 : 1.2 + Math.random() * 4.5;
+    }
+    // decay flash
+    this.flashLight.intensity = Math.max(0, this.flashLight.intensity - dt * 600000);
+    this.hemi.intensity = Math.max(0, this.hemi.intensity - dt * 6);
+    if (greenGlowUniform) {
+      greenGlowUniform.value = Math.max(0, greenGlowUniform.value - dt * 1.2);
+      if (this.flashLight.intensity > 20000) greenGlowUniform.value = 1.0;
+    }
+    // age bolts
+    for (let i = this.bolts.length - 1; i >= 0; i--) {
+      const b = this.bolts[i];
+      b.age += dt;
+      b.mat.opacity = Math.max(0, 1 - b.age / b.ttl);
+      if (b.age >= b.ttl) {
+        this.scene.remove(b.group);
+        b.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+        this.bolts.splice(i, 1);
+      }
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Storm sky dome (dark swirling gradient)                             */
+/* ------------------------------------------------------------------ */
+function buildSky(stormPos) {
+  const geo = new THREE.SphereGeometry(4200, 32, 20);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uStormPos: { value: stormPos.clone() },
+      uCamPos: { value: new THREE.Vector3() },
+      uTime: { value: 0 },
+    },
+    vertexShader: /* glsl */`
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = p.xyww; // pin to far plane
+      }
+    `,
+    fragmentShader: /* glsl */`
+      precision highp float;
+      varying vec3 vDir;
+      uniform vec3 uStormPos;
+      uniform vec3 uCamPos;
+      uniform float uTime;
+
+      float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+      float vnoise(vec2 p){
+        vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
+                   mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+      }
+
+      void main() {
+        vec3 dir = normalize(vDir);
+        float up = clamp(dir.y, -0.1, 1.0);
+
+        // clear-ish horizon away from storm, bruised dark near it
+        vec3 horizon = vec3(0.72, 0.80, 0.62);
+        vec3 zenith  = vec3(0.34, 0.48, 0.42);
+
+        vec2 toStorm = normalize(uStormPos.xz - uCamPos.xz);
+        float stormSide = pow(max(dot(normalize(dir.xz + 1e-5), toStorm), 0.0), 1.6);
+        float dark = stormSide * (1.0 - up * 0.55);
+
+        horizon = mix(horizon, vec3(0.24, 0.29, 0.22), dark);
+        zenith  = mix(zenith,  vec3(0.10, 0.13, 0.11), dark * 0.9);
+
+        // green tinge right at the storm base — hail core glow
+        float greenBand = stormSide * smoothstep(0.35, 0.02, abs(dir.y - 0.06));
+        horizon = mix(horizon, vec3(0.35, 0.62, 0.30), greenBand * 0.55);
+
+        // slow swirling murk
+        float swirl = vnoise(dir.xz * 4.0 / max(0.12, up + 0.2) + uTime * 0.015);
+        zenith *= 0.85 + swirl * 0.3;
+
+        vec3 col = mix(horizon, zenith, pow(clamp(up, 0.0, 1.0), 0.55));
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  return { mesh, mat };
+}
+
+/* ====== inline bundle: controls.js ====== */
+
+
+/**
+ * Unified controls:
+ *  - Desktop: WASD/arrows + pointer-lock mouse look
+ *  - Mobile (auto-detected via touch): virtual joystick + drag-look zone
+ */
+class PlayerControls {
+  constructor(camera, dom, terrainHeightFn, opts = {}) {
+    this.camera = camera;
+    this.dom = dom;
+    this.getGroundY = terrainHeightFn;
+    this.pos = new THREE.Vector3(0, 0, 180);
+    this.yaw = Math.PI;          // face the storm
+    this.pitch = -0.04;
+    this.speed = opts.speed ?? 120;      // units/s (≈ 12 km/h real scale... cartoon-fast)
+    this.eyeHeight = opts.eyeHeight ?? 14;
+    this.keys = {};
+    this.joy = { x: 0, y: 0, active: false };
+    this.isMobile = ('ontouchstart' in window) && matchMedia('(pointer: coarse)').matches;
+
+    if (this.isMobile) {
+      document.body.classList.add('mobile');
+      this.initJoystick();
+      this.initLookZone();
+    } else {
+      this.initKeyboard();
+      this.initPointerLock();
+    }
+    this.syncCamera(0);
+  }
+
+  initKeyboard() {
+    addEventListener('keydown', e => { this.keys[e.code] = true; });
+    addEventListener('keyup', e => { this.keys[e.code] = false; });
+  }
+
+  initPointerLock() {
+    this.dom.addEventListener('click', () => {
+      if (document.pointerLockElement !== this.dom) this.dom.requestPointerLock();
+    });
+    addEventListener('mousemove', e => {
+      if (document.pointerLockElement !== this.dom) return;
+      this.yaw -= e.movementX * 0.0022;
+      this.pitch -= e.movementY * 0.0022;
+      this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch));
+    });
+  }
+
+  initJoystick() {
+    const joy = document.getElementById('joystick');
+    const stick = document.getElementById('stick');
+    let touchId = null;
+    const R = 44;
+
+    const handle = (t) => {
+      const rect = joy.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      let dx = t.clientX - cx, dy = t.clientY - cy;
+      const len = Math.hypot(dx, dy);
+      if (len > R) { dx = dx / len * R; dy = dy / len * R; }
+      stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+      this.joy.x = dx / R; this.joy.y = dy / R; this.joy.active = true;
+    };
+
+    joy.addEventListener('touchstart', e => {
+      e.preventDefault();
+      touchId = e.changedTouches[0].identifier;
+      handle(e.changedTouches[0]);
+    }, { passive: false });
+    joy.addEventListener('touchmove', e => {
+      e.preventDefault();
+      for (const t of e.changedTouches) if (t.identifier === touchId) handle(t);
+    }, { passive: false });
+    const end = e => {
+      for (const t of e.changedTouches) if (t.identifier === touchId) {
+        touchId = null; this.joy.x = this.joy.y = 0; this.joy.active = false;
+        stick.style.transform = 'translate(-50%, -50%)';
+      }
+    };
+    joy.addEventListener('touchend', end);
+    joy.addEventListener('touchcancel', end);
+  }
+
+  initLookZone() {
+    const zone = document.getElementById('lookzone');
+    let last = null;
+    zone.addEventListener('touchstart', e => {
+      const t = e.changedTouches[0];
+      last = { id: t.identifier, x: t.clientX, y: t.clientY };
+    }, { passive: true });
+    zone.addEventListener('touchmove', e => {
+      if (!last) return;
+      for (const t of e.changedTouches) if (t.identifier === last.id) {
+        this.yaw -= (t.clientX - last.x) * 0.005;
+        this.pitch -= (t.clientY - last.y) * 0.005;
+        this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch));
+        last.x = t.clientX; last.y = t.clientY;
+      }
+    }, { passive: true });
+    zone.addEventListener('touchend', () => { last = null; });
+  }
+
+  update(dt) {
+    // input vector in local space
+    let ix = 0, iz = 0;
+    if (this.keys['KeyW'] || this.keys['ArrowUp']) iz -= 1;
+    if (this.keys['KeyS'] || this.keys['ArrowDown']) iz += 1;
+    if (this.keys['KeyA'] || this.keys['ArrowLeft']) ix -= 1;
+    if (this.keys['KeyD'] || this.keys['ArrowRight']) ix += 1;
+    if (this.isMobile) { ix = this.joy.x; iz = this.joy.y; }
+
+    const len = Math.hypot(ix, iz);
+    if (len > 1e-3) {
+      ix /= Math.max(1, len); iz /= Math.max(1, len);
+      const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
+      const wx = (ix * cos - iz * sin);
+      const wz = (ix * sin + iz * cos);
+      this.pos.x += wx * this.speed * dt;
+      this.pos.z += wz * this.speed * dt;
+    }
+
+    // clamp to map bounds (150 x 120 km)
+    this.pos.x = Math.max(-735, Math.min(735, this.pos.x));
+    this.pos.z = Math.max(-585, Math.min(585, this.pos.z));
+
+    // smooth ground follow
+    const gy = this.getGroundY(this.pos.x, this.pos.z) + this.eyeHeight;
+    this.pos.y += (gy - this.pos.y) * Math.min(1, dt * 6);
+    if (Math.abs(this.pos.y - gy) > 200) this.pos.y = gy; // teleport fix
+
+    this.syncCamera(dt);
+  }
+
+  syncCamera() {
+    this.camera.position.copy(this.pos);
+    this.camera.rotation.set(0, 0, 0);
+    this.camera.rotateY(this.yaw);
+    this.camera.rotateX(this.pitch);
+  }
+}
+
+/* ====== inline bundle: grade.js ====== */
+
+
+
+
+
+
+
+/**
+ * Color correction: exposure / saturation / contrast / green lift / vignette,
+ * plus subtle bloom so lightning pops. Sliders in the HUD drive uniforms live.
+ */
+const GradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uExposure: { value: 1.05 },
+    uSaturation: { value: 1.25 },
+    uContrast: { value: 1.08 },
+    uGreenLift: { value: 0.10 },
+    uVignette: { value: 0.35 },
+    uFlash: { value: 0.0 },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: /* glsl */`
+    precision highp float;
+    varying vec2 vUv;
+    uniform sampler2D tDiffuse;
+    uniform float uExposure, uSaturation, uContrast, uGreenLift, uVignette, uFlash;
+
+    void main() {
+      vec3 col = texture2D(tDiffuse, vUv).rgb;
+      col *= uExposure;
+
+      // lift greens (cartoon grass pop + sickly supercell tint)
+      col.g += uGreenLift * col.g * 1.4;
+      col.r *= 1.0 - uGreenLift * 0.35;
+
+      // saturation
+      float luma = dot(col, vec3(0.299, 0.587, 0.114));
+      col = mix(vec3(luma), col, uSaturation);
+
+      // contrast around mid grey
+      col = (col - 0.5) * uContrast + 0.5;
+
+      // gentle warm-green tone curve: crush shadows a touch
+      col = pow(max(col, 0.0), vec3(0.96));
+
+      // vignette
+      float d = distance(vUv, vec2(0.5));
+      col *= 1.0 - smoothstep(0.42, 0.86, d) * uVignette;
+
+      // lightning screen flash (green-white)
+      col += uFlash * vec3(0.55, 0.95, 0.55) * (1.0 - smoothstep(0.3, 0.75, d) * 0.5);
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+};
+
+function buildPost(renderer, scene, camera) {
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+
+  const bloom = new UnrealBloomPass(
+    new THREE.Vector2(innerWidth, innerHeight), 0.35, 0.6, 0.82
+  );
+  composer.addPass(bloom);
+
+  const grade = new ShaderPass(GradeShader);
+  composer.addPass(grade);
+  composer.addPass(new OutputPass());
+
+  // wire HUD sliders
+  const bind = (id, uniform, fmt = v => v.toFixed(2)) => {
+    const slider = document.getElementById('s-' + id);
+    const label = document.getElementById('v-' + id);
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+      const v = parseFloat(slider.value);
+      grade.uniforms[uniform].value = v;
+      label.textContent = fmt(v);
+    });
+  };
+  bind('exposure', 'uExposure');
+  bind('saturation', 'uSaturation');
+  bind('contrast', 'uContrast');
+  bind('green', 'uGreenLift', v => v.toFixed(3));
+  bind('vignette', 'uVignette');
+
+  const presets = {
+    'preset-cartoon': { uExposure: 1.05, uSaturation: 1.25, uContrast: 1.08, uGreenLift: 0.10, uVignette: 0.35 },
+    'preset-storm':   { uExposure: 0.88, uSaturation: 0.95, uContrast: 1.22, uGreenLift: 0.16, uVignette: 0.55 },
+    'preset-noir':    { uExposure: 0.95, uSaturation: 0.05, uContrast: 1.45, uGreenLift: 0.02, uVignette: 0.70 },
+  };
+  for (const [id, values] of Object.entries(presets)) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
+    btn.addEventListener('click', () => {
+      for (const [u, v] of Object.entries(values)) {
+        grade.uniforms[u].value = v;
+        const key = u.replace('u', '').toLowerCase();
+        const slider = document.getElementById('s-' + key);
+        const label = document.getElementById('v-' + key);
+        if (slider) slider.value = v;
+        if (label) label.textContent = key === 'green' ? v.toFixed(3) : v.toFixed(2);
+      }
+    });
+  }
+
+  return { composer, grade, bloom };
+}
+
+/* ====== inline bundle: main.js ====== */
+
+
+
+
+
+
+const loadbar = document.getElementById('loadbar');
+const setProgress = p => { if (loadbar) loadbar.style.width = `${(p * 100) | 0}%`; };
+
+/* ---------------- renderer / scene ---------------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.NoToneMapping; // grade pass handles the look
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x6f7f5e, 260, 1400);
+
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.5, 9000);
+
+/* ---------------- lights (toon sun + storm fill) ---------------- */
+const sun = new THREE.DirectionalLight(0xfff4d6, 2.0);
+sun.position.set(500, 800, 350);
+scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xcfe8b0, 0x2a4416, 0.9));
+
+/* ---------------- storm position (fixed over the map) ---------------- */
+const stormPos = new THREE.Vector3(260, terrainHeight(260, -240) + 60, -240);
+
+/* ---------------- terrain ---------------- */
+setProgress(0.15);
+const { group: terrainGroup, uniforms: terrainUniforms } = buildTerrain();
+scene.add(terrainGroup);
+setProgress(0.55);
+
+const tufts = buildGrassTufts(2600);
+scene.add(tufts);
+setProgress(0.7);
+
+/* ---------------- sky ---------------- */
+const sky = buildSky(stormPos);
+scene.add(sky.mesh);
+
+/* ---------------- smoke simulator + supercell ---------------- */
+const smoke = new SmokeSimulator({ maxParticles: 2200, stormPos });
+smoke.uniforms.uPixelRatio.value = Math.min(devicePixelRatio, 2);
+scene.add(smoke.points);
+
+const lightning = new Lightning(scene, stormPos);
+const flashDiv = document.getElementById('flash');
+let flashAlpha = 0;
+lightning.onStrike = () => { flashAlpha = 0.85; };
+
+// green core glow light under the storm (always-on sickly tint)
+const coreGlow = new THREE.PointLight(0x51d14e, 14000, 1600, 1.8);
+coreGlow.position.copy(stormPos).y += 90;
+scene.add(coreGlow);
+
+setProgress(0.85);
+
+/* ---------------- post / color correction ---------------- */
+const { composer, grade } = buildPost(renderer, scene, camera);
+
+/* ---------------- controls (desktop / mobile auto) ---------------- */
+const controls = new PlayerControls(camera, renderer.domElement, terrainHeight, {
+  speed: 130, eyeHeight: 14,
+});
+
+/* ---------------- resize ---------------- */
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+});
+
+/* ---------------- main loop ---------------- */
+const clock = new THREE.Clock();
+const statsEl = document.getElementById('stats');
+let statTimer = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  controls.update(dt);
+
+  // systems
+  smoke.update(dt);
+  lightning.update(dt, smoke.uniforms.uGreenGlow);
+  coreGlow.intensity = 12000 + Math.sin(t * 2.3) * 2500 + smoke.uniforms.uGreenGlow.value * 22000;
+
+  // uniforms
+  terrainUniforms.uCamPos.value.copy(camera.position);
+  sky.mat.uniforms.uCamPos.value.copy(camera.position);
+  sky.mat.uniforms.uTime.value = t;
+  smoke.uniforms.uTime.value = t;
+
+  // lightning screen flash decay
+  flashAlpha = Math.max(0, flashAlpha - dt * 3.2);
+  grade.uniforms.uFlash.value = flashAlpha * 0.55;
+  if (flashDiv) flashDiv.style.opacity = flashAlpha.toFixed(3);
+
+  composer.render();
+
+  statTimer -= dt;
+  if (statTimer <= 0 && statsEl) {
+    statTimer = 0.25;
+    const km = (v) => (v * WORLD.unitToMeters / 1000).toFixed(1);
+    const pos = controls.pos;
+    statsEl.textContent =
+      `pos ${km(pos.x)} km, ${km(pos.z)} km · h ${(terrainHeight(pos.x, pos.z) * WORLD.unitToMeters / 1000).toFixed(2)} km · ` +
+      `${renderer.info.render.calls} draws · ${(renderer.info.render.triangles / 1000) | 0}k tris · ` +
+      `${controls.isMobile ? 'MOBILE joystick' : 'desktop'}`;
+  }
+}
+
+setProgress(1);
+const loading = document.getElementById('loading');
+loading.style.opacity = '0';
+setTimeout(() => loading.remove(), 700);
+animate();
+
+</script>
+</body>
+</html>
