@@ -94,17 +94,22 @@ export class SmokeSimulator {
           float n = vnoise(gl_PointCoord * 5.0 + vShade * 37.0 + uTime * 0.12);
           float edge = smoothstep(0.5, 0.12, r + (n - 0.5) * 0.28);
 
-          // base cloud colors: dark storm grey -> green hail core
-          vec3 greyDark  = vec3(0.16, 0.17, 0.18);
-          vec3 greyLight = vec3(0.52, 0.55, 0.56);
-          vec3 greenCore = vec3(0.29, 0.66, 0.30);
+          // base cloud colors: layered storm greys with vertical pseudo-lighting
+          vec3 greyDark  = vec3(0.12, 0.13, 0.15);
+          vec3 greyMid   = vec3(0.33, 0.35, 0.38);
+          vec3 greyLight = vec3(0.68, 0.70, 0.72);
+          vec3 greenCore = vec3(0.34, 0.55, 0.31);
 
-          vec3 col = mix(greyDark, greyLight, vShade);
-          // sickly green tint low in the storm, boosted by lightning charge
-          float g = clamp(vGreen * (0.55 + uGreenGlow * 1.6), 0.0, 1.0);
-          col = mix(col, greenCore, g * (0.35 + 0.45 * n));
+          // tops lit, bellies dark — gives the puffs volume
+          float lit = clamp(gl_PointCoord.y * 0.85 + n * 0.4 + vShade * 0.25, 0.0, 1.0);
+          vec3 col = mix(greyDark, greyLight, lit);
+          col = mix(col, greyMid, n * 0.35);
 
-          float a = edge * vFade * 0.62;
+          // green tint only low in the core, mostly when lightning charges it
+          float g = clamp(vGreen * (0.16 + uGreenGlow * 0.7), 0.0, 1.0);
+          col = mix(col, greenCore, g * (0.18 + 0.22 * n));
+
+          float a = edge * vFade * 0.55;
           gl_FragColor = vec4(col, a);
         }
       `,
@@ -369,7 +374,7 @@ export function buildSky(stormPos) {
 
         // green tinge right at the storm base — hail core glow
         float greenBand = stormSide * smoothstep(0.35, 0.02, abs(dir.y - 0.06));
-        horizon = mix(horizon, vec3(0.35, 0.62, 0.30), greenBand * 0.55);
+        horizon = mix(horizon, vec3(0.38, 0.58, 0.33), greenBand * 0.30);
 
         // slow swirling murk
         float swirl = vnoise(dir.xz * 4.0 / max(0.12, up + 0.2) + uTime * 0.015);
@@ -383,4 +388,177 @@ export function buildSky(stormPos) {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.frustumCulled = false;
   return { mesh, mat };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Tornado — drops from the storm base ~5s after the storm starts,     */
+/*  touches down, then roams near the mesocyclone.                      */
+/* ------------------------------------------------------------------ */
+export class Tornado {
+  constructor(scene, stormPos, groundHeightFn, { spawnDelay = 5 } = {}) {
+    this.scene = scene;
+    this.anchor = stormPos.clone();
+    this.center = stormPos.clone();
+    this.getGroundY = groundHeightFn;
+    this.spawnDelay = spawnDelay;
+    this.age = 0;
+    this.born = false;
+    this.grow = 0;
+
+    this.group = new THREE.Group();
+    this.group.visible = false;
+    scene.add(this.group);
+
+    this.buildFunnel();
+    this.buildDust();
+  }
+
+  buildFunnel() {
+    // tapered funnel, wide at cloud base, narrow at the ground
+    const geo = new THREE.CylinderGeometry(16, 3.5, 230, 44, 26, true);
+    geo.translate(0, 115, 0);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uTime: { value: 0 },
+        uGrow: { value: 0 },
+      },
+      vertexShader: /* glsl */`
+        varying vec2 vUv;
+        varying float vH;
+        uniform float uTime;
+        uniform float uGrow;
+        void main() {
+          vUv = uv;
+          vH = position.y / 230.0;                 // 0 ground .. 1 cloud
+          vec3 p = position;
+          float ang = atan(p.z, p.x);
+          // wobble stronger near the ground, whole column sways
+          float wob = sin(ang * 3.0 + uTime * 2.4 + p.y * 0.045) * 4.5 * (1.0 - vH * 0.7);
+          wob += sin(ang * 6.0 - uTime * 3.4 + p.y * 0.02) * 2.5;
+          p.x += wob * cos(ang);
+          p.z += wob * sin(ang);
+          p.x += sin(uTime * 0.7 + vH * 2.5) * 9.0 * vH;   // sway aloft
+          p.xz *= uGrow;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        varying vec2 vUv;
+        varying float vH;
+        uniform float uTime;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float vnoise(vec2 p){
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x),
+                     mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+        }
+        void main() {
+          // rising, wrapping streaks => spinning dust column
+          float streak = vnoise(vec2(vUv.x * 9.0 + uTime * 0.55, vH * 7.0 - uTime * 2.1));
+          float streak2 = vnoise(vec2(vUv.x * 22.0 - uTime * 0.9, vH * 18.0 - uTime * 3.8));
+          float body = smoothstep(0.22, 0.78, streak * 0.62 + streak2 * 0.48);
+          vec3 dusty = vec3(0.45, 0.40, 0.33);
+          vec3 dark  = vec3(0.15, 0.14, 0.13);
+          vec3 col = mix(dark, dusty, streak * 0.75 + vH * 0.25);
+          float a = body * 0.82 * (0.75 + 0.25 * streak2);
+          gl_FragColor = vec4(col, a);
+        }
+      `,
+    });
+    this.funnelMat = mat;
+    this.funnel = new THREE.Mesh(geo, mat);
+    this.funnel.frustumCulled = false;
+    this.group.add(this.funnel);
+  }
+
+  buildDust() {
+    // debris/dust ring orbiting the base
+    const N = 380;
+    this.dustN = N;
+    this.dustPos = new Float32Array(N * 3);
+    this.dustAng = new Float32Array(N);
+    this.dustRad = new Float32Array(N);
+    this.dustH = new Float32Array(N);
+    this.dustVel = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      this.dustAng[i] = Math.random() * Math.PI * 2;
+      this.dustRad[i] = 10 + Math.random() * 65;
+      this.dustH[i] = Math.random() * 26;
+      this.dustVel[i] = 2.5 + Math.random() * 4.5;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.dustPos, 3));
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: { uPixelRatio: { value: 1 } },
+      vertexShader: /* glsl */`
+        uniform float uPixelRatio;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = min(90.0 * uPixelRatio * (140.0 / -mv.z), 64.0);
+          gl_Position = projectionMatrix * mv;
+        }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        void main() {
+          float r = length(gl_PointCoord - 0.5);
+          if (r > 0.5) discard;
+          float a = smoothstep(0.5, 0.1, r) * 0.35;
+          gl_FragColor = vec4(vec3(0.42, 0.37, 0.30), a);
+        }
+      `,
+    });
+    this.dust = new THREE.Points(geo, mat);
+    this.dust.frustumCulled = false;
+    this.group.add(this.dust);
+  }
+
+  update(dt) {
+    this.age += dt;
+    if (!this.born) {
+      if (this.age >= this.spawnDelay) {
+        this.born = true;
+        // touchdown point: near the storm, biased toward open ground
+        this.center.x = this.anchor.x + (Math.random() - 0.5) * 220;
+        this.center.z = this.anchor.z + (Math.random() - 0.5) * 220;
+      } else {
+        return;
+      }
+    }
+
+    this.group.visible = true;
+    this.grow = Math.min(1, this.grow + dt / 2.5);          // 2.5s touchdown
+    const ease = this.grow * this.grow * (3 - 2 * this.grow); // smoothstep
+
+    // slow roam around the anchor
+    this.center.x += Math.sin(this.age * 0.21) * dt * 9;
+    this.center.z += Math.cos(this.age * 0.17) * dt * 9;
+    const gy = this.getGroundY(this.center.x, this.center.z);
+    this.group.position.set(this.center.x, gy, this.center.z);
+
+    this.funnelMat.uniforms.uTime.value = this.age;
+    this.funnelMat.uniforms.uGrow.value = ease;
+    this.group.scale.set(ease, 0.35 + 0.65 * ease, ease);
+    this.funnel.rotation.y -= dt * 3.2;
+
+    // dust orbits faster near the core, rises and recycles
+    for (let i = 0; i < this.dustN; i++) {
+      const w = this.dustVel[i] / this.dustRad[i];
+      this.dustAng[i] += w * dt * 3.0;
+      this.dustH[i] += dt * (4 + this.dustVel[i]);
+      if (this.dustH[i] > 34) this.dustH[i] = Math.random() * 4;
+      const r = this.dustRad[i] * (1 - this.dustH[i] / 90);
+      this.dustPos[i * 3] = Math.cos(this.dustAng[i]) * r;
+      this.dustPos[i * 3 + 1] = this.dustH[i] * ease;
+      this.dustPos[i * 3 + 2] = Math.sin(this.dustAng[i]) * r;
+    }
+    this.dust.geometry.attributes.position.needsUpdate = true;
+  }
 }

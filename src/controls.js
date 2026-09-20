@@ -114,8 +114,9 @@ export class PlayerControls {
     if (len > 1e-3) {
       ix /= Math.max(1, len); iz /= Math.max(1, len);
       const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-      const wx = (ix * cos - iz * sin);
-      const wz = (ix * sin + iz * cos);
+      // world = right*ix + forward*(-iz); forward=(-sin,-cos), right=(cos,-sin)
+      const wx = (ix * cos + iz * sin);
+      const wz = (iz * cos - ix * sin);
       this.pos.x += wx * this.speed * dt;
       this.pos.z += wz * this.speed * dt;
     }

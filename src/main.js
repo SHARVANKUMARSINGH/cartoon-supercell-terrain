@@ -48,6 +48,7 @@ smoke.uniforms.uPixelRatio.value = Math.min(devicePixelRatio, 2);
 scene.add(smoke.points);
 
 const lightning = new Lightning(scene, stormPos);
+const tornado = new Tornado(scene, stormPos, terrainHeight, { spawnDelay: 5 });
 const flashDiv = document.getElementById('flash');
 let flashAlpha = 0;
 lightning.onStrike = () => { flashAlpha = 0.85; };
@@ -90,6 +91,7 @@ function animate() {
   // systems
   smoke.update(dt);
   lightning.update(dt, smoke.uniforms.uGreenGlow);
+  tornado.update(dt);
   coreGlow.intensity = 12000 + Math.sin(t * 2.3) * 2500 + smoke.uniforms.uGreenGlow.value * 22000;
 
   // uniforms
