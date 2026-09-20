@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeFbm2D } from './noise.js';
+import { makeFbm2D } from './noise.js?v=2';
 
 /**
  * Cartoon grass terrain:

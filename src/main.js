@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { buildTerrain, buildGrassTufts, terrainHeight, WORLD } from './terrain.js';
-import { SmokeSimulator, Lightning, buildSky } from './smoke.js';
-import { PlayerControls } from './controls.js';
-import { buildPost } from './grade.js';
+import { buildTerrain, buildGrassTufts, terrainHeight, WORLD } from './terrain.js?v=2';
+import { SmokeSimulator, Lightning, buildSky, Tornado } from './smoke.js?v=2';
+import { PlayerControls } from './controls.js?v=2';
+import { buildPost } from './grade.js?v=2';
 
 const loadbar = document.getElementById('loadbar');
 const setProgress = p => { if (loadbar) loadbar.style.width = `${(p * 100) | 0}%`; };
@@ -43,7 +43,7 @@ const sky = buildSky(stormPos);
 scene.add(sky.mesh);
 
 /* ---------------- smoke simulator + supercell ---------------- */
-const smoke = new SmokeSimulator({ maxParticles: 2200, stormPos });
+const smoke = new SmokeSimulator({ maxParticles: 2600, stormPos });
 smoke.uniforms.uPixelRatio.value = Math.min(devicePixelRatio, 2);
 scene.add(smoke.points);
 
